@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import Papa from "papaparse";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { ArrowDownCircle, ArrowUpCircle, Wallet } from "lucide-react";
+import { ArrowDownCircle, ArrowUpCircle, Wallet, Calendar } from "lucide-react";
 
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSqztjESSpfJhASULscC6g2WeeHRTcOIPBThB1Q0hG1TGxsNB5dybTeBj7kLgRJfXU4KXIQjIjMCL_k/pub?gid=0&single=true&output=csv';
 const COLORES = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
@@ -17,25 +17,38 @@ interface FilaDatos {
   Tipo?: string;
   Categoria?: string;
   Detalle?: string;
+  Fecha?: string; 
   [key: string]: any; 
 }
 
-// Nueva interfaz para los detalles de cada gasto
 interface DetalleGasto {
   detalle: string;
   monto: number;
 }
 
 export default function App() {
-  const [datos, setDatos] = useState<FilaDatos[]>([]);
+  const [datosOriginales, setDatosOriginales] = useState<FilaDatos[]>([]);
+  const [mesesDisponibles, setMesesDisponibles] = useState<string[]>([]);
+  const [mesSeleccionado, setMesSeleccionado] = useState<string>('');
+  
   const [totales, setTotales] = useState({ ingresos: 0, gastos: 0 });
   const [gastosPorCategoria, setGastosPorCategoria] = useState<DataCategoria[]>([]);
-  
-  // Nuevo estado para guardar la lista de gastos agrupada por categoría
   const [detallesPorCategoria, setDetallesPorCategoria] = useState<Record<string, DetalleGasto[]>>({});
-  
   const [cargando, setCargando] = useState(true);
 
+  // Extrae el mes y año de cualquier formato de fecha (ej: "2026-09" o "09/2026")
+  const extraerMesAnio = (fechaStr?: string) => {
+    if (!fechaStr) return 'Sin fecha';
+    const partes = fechaStr.split(/[-/ T]/);
+    if (partes.length >= 3) {
+      const anio = partes[2].length === 4 ? partes[2] : partes[0];
+      const mes = partes[2].length === 4 ? partes[1] : partes[1];
+      return `${anio}-${mes.padStart(2, '0')}`;
+    }
+    return 'Sin fecha';
+  };
+
+  // Carga los datos del CSV una sola vez
   useEffect(() => {
     Papa.parse<FilaDatos>(SHEET_URL, {
       download: true,
@@ -43,67 +56,109 @@ export default function App() {
       complete: (resultados) => {
         const filas = resultados.data.filter((fila) => fila.Monto); 
         
-        let ingresos = 0;
-        let gastos = 0;
-        let categorias: Record<string, number> = {};
-        let detallesCat: Record<string, DetalleGasto[]> = {};
-
-        filas.forEach((fila) => {
-          const montoStr = fila.Monto ? String(fila.Monto).replace(',', '.') : '0';
-          const monto = parseFloat(montoStr);
-          const tipo = fila.Tipo ? String(fila.Tipo).toLowerCase().trim() : '';
-          const categoria = fila.Categoria ? String(fila.Categoria) : 'Otros';
-          const detalleText = fila.Detalle ? String(fila.Detalle).trim() : 'Sin detalle';
-
-          if (tipo === 'ingreso') {
-            ingresos += monto;
-          } else if (tipo === 'gasto' || tipo === 'gastos') {
-            gastos += monto;
-            
-            // Sumar al total de la categoría
-            if (categorias[categoria]) {
-              categorias[categoria] += monto;
-            } else {
-              categorias[categoria] = monto;
-            }
-
-            // Guardar el gasto individual en la lista de su categoría
-            if (!detallesCat[categoria]) {
-              detallesCat[categoria] = [];
-            }
-            detallesCat[categoria].push({
-              detalle: detalleText,
-              monto: monto
-            });
-          }
+        const meses = new Set<string>();
+        filas.forEach(fila => {
+          const mesAnio = extraerMesAnio(fila.Fecha);
+          if (mesAnio !== 'Sin fecha') meses.add(mesAnio);
         });
 
-        const dataCategorias: DataCategoria[] = Object.keys(categorias).map(nombre => ({
-          name: nombre,
-          value: categorias[nombre]
-        })).sort((a, b) => b.value - a.value); 
-
-        setTotales({ ingresos, gastos });
-        setGastosPorCategoria(dataCategorias);
-        setDetallesPorCategoria(detallesCat);
-        setDatos(filas);
+        // Ordena los meses del más nuevo al más viejo
+        const mesesOrdenados = Array.from(meses).sort((a, b) => b.localeCompare(a));
+        
+        setDatosOriginales(filas);
+        setMesesDisponibles(mesesOrdenados);
+        if (mesesOrdenados.length > 0) {
+          setMesSeleccionado(mesesOrdenados[0]); 
+        }
         setCargando(false);
       }
     });
   }, []);
+
+  // Recalcula los totales y gráficos cada vez que cambias el mes en el selector
+  useEffect(() => {
+    if (datosOriginales.length === 0) return;
+
+    let ingresos = 0;
+    let gastos = 0;
+    let categorias: Record<string, number> = {};
+    let detallesCat: Record<string, DetalleGasto[]> = {};
+
+    datosOriginales.forEach((fila) => {
+      const mesFila = extraerMesAnio(fila.Fecha);
+      
+      // Si el mes de la fila no coincide con el seleccionado, lo ignora
+      if (mesSeleccionado !== 'Todos' && mesFila !== mesSeleccionado) return;
+
+      const montoStr = fila.Monto ? String(fila.Monto).replace(',', '.') : '0';
+      const monto = parseFloat(montoStr);
+      const tipo = fila.Tipo ? String(fila.Tipo).toLowerCase().trim() : '';
+      const categoria = fila.Categoria ? String(fila.Categoria) : 'Otros';
+      const detalleText = fila.Detalle ? String(fila.Detalle).trim() : 'Sin detalle';
+
+      if (tipo === 'ingreso') {
+        ingresos += monto;
+      } else if (tipo === 'gasto' || tipo === 'gastos') {
+        gastos += monto;
+        
+        if (categorias[categoria]) {
+          categorias[categoria] += monto;
+        } else {
+          categorias[categoria] = monto;
+        }
+
+        if (!detallesCat[categoria]) {
+          detallesCat[categoria] = [];
+        }
+        detallesCat[categoria].push({
+          detalle: detalleText,
+          monto: monto
+        });
+      }
+    });
+
+    const dataCategorias: DataCategoria[] = Object.keys(categorias).map(nombre => ({
+      name: nombre,
+      value: categorias[nombre]
+    })).sort((a, b) => b.value - a.value); 
+
+    setTotales({ ingresos, gastos });
+    setGastosPorCategoria(dataCategorias);
+    setDetallesPorCategoria(detallesCat);
+
+  }, [datosOriginales, mesSeleccionado]);
 
   if (cargando) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Cargando tus finanzas...</div>;
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6 font-sans">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8 text-center text-gray-100">Mi Panel Financiero</h1>
+        
+        {/* Selector de Mes */}
+        <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+          <h1 className="text-3xl font-bold text-gray-100">Mi Panel Financiero</h1>
+          <div className="flex items-center gap-2 bg-gray-800 p-3 rounded-xl border border-gray-700 shadow-sm">
+            <Calendar className="text-blue-400" size={22} />
+            <select 
+              className="bg-transparent text-white font-semibold outline-none cursor-pointer"
+              value={mesSeleccionado}
+              onChange={(e) => setMesSeleccionado(e.target.value)}
+            >
+              {mesesDisponibles.map(mes => (
+                <option key={mes} value={mes} className="bg-gray-800 text-white">
+                  {mes}
+                </option>
+              ))}
+              <option value="Todos" className="bg-gray-800 text-gray-400">Histórico completo</option>
+            </select>
+          </div>
+        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700 flex items-center gap-4">
             <ArrowUpCircle className="text-green-400" size={40} />
             <div>
-              <p className="text-gray-400 text-sm">Total Ingresos</p>
+              <p className="text-gray-400 text-sm">Ingresos del Mes</p>
               <p className="text-2xl font-bold text-green-400">${totales.ingresos.toLocaleString()}</p>
             </div>
           </div>
@@ -111,7 +166,7 @@ export default function App() {
           <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700 flex items-center gap-4">
             <ArrowDownCircle className="text-red-400" size={40} />
             <div>
-              <p className="text-gray-400 text-sm">Total Gastos</p>
+              <p className="text-gray-400 text-sm">Gastos del Mes</p>
               <p className="text-2xl font-bold text-red-400">${totales.gastos.toLocaleString()}</p>
             </div>
           </div>
@@ -119,14 +174,14 @@ export default function App() {
           <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700 flex items-center gap-4">
             <Wallet className="text-blue-400" size={40} />
             <div>
-              <p className="text-gray-400 text-sm">Balance Actual</p>
+              <p className="text-gray-400 text-sm">Balance del Mes</p>
               <p className="text-2xl font-bold text-blue-400">${(totales.ingresos - totales.gastos).toLocaleString()}</p>
             </div>
           </div>
         </div>
 
         <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700 mb-8">
-          <h2 className="text-xl font-semibold mb-4 text-gray-200">Resumen por Categoría</h2>
+          <h2 className="text-xl font-semibold mb-4 text-gray-200">Distribución de Gastos</h2>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -154,7 +209,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Nueva sección: Desglose de gastos */}
         <h2 className="text-2xl font-bold mb-6 text-gray-100 mt-10">Detalle de Movimientos</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {Object.entries(detallesPorCategoria).map(([categoria, items]) => (
