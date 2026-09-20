@@ -7,7 +7,6 @@ import { ArrowDownCircle, ArrowUpCircle, Wallet } from "lucide-react";
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSqztjESSpfJhASULscC6g2WeeHRTcOIPBThB1Q0hG1TGxsNB5dybTeBj7kLgRJfXU4KXIQjIjMCL_k/pub?gid=0&single=true&output=csv';
 const COLORES = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
-// 1. Definimos estrictamente los tipos para complacer a Vercel
 interface DataCategoria {
   name: string;
   value: number;
@@ -17,55 +16,76 @@ interface FilaDatos {
   Monto?: string;
   Tipo?: string;
   Categoria?: string;
-  [key: string]: any; // Permite otras columnas extra sin dar error
+  Detalle?: string;
+  [key: string]: any; 
+}
+
+// Nueva interfaz para los detalles de cada gasto
+interface DetalleGasto {
+  detalle: string;
+  monto: number;
 }
 
 export default function App() {
-  // 2. Asignamos los tipos a los estados
   const [datos, setDatos] = useState<FilaDatos[]>([]);
   const [totales, setTotales] = useState({ ingresos: 0, gastos: 0 });
   const [gastosPorCategoria, setGastosPorCategoria] = useState<DataCategoria[]>([]);
+  
+  // Nuevo estado para guardar la lista de gastos agrupada por categoría
+  const [detallesPorCategoria, setDetallesPorCategoria] = useState<Record<string, DetalleGasto[]>>({});
+  
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    // 3. Le indicamos a PapaParse el tipo de dato esperado
     Papa.parse<FilaDatos>(SHEET_URL, {
       download: true,
       header: true,
       complete: (resultados) => {
-        const filas = resultados.data.filter((fila) => fila.Monto);
-
+        const filas = resultados.data.filter((fila) => fila.Monto); 
+        
         let ingresos = 0;
         let gastos = 0;
         let categorias: Record<string, number> = {};
+        let detallesCat: Record<string, DetalleGasto[]> = {};
 
         filas.forEach((fila) => {
-          // Aseguramos que los valores existan antes de transformarlos
           const montoStr = fila.Monto ? String(fila.Monto).replace(',', '.') : '0';
           const monto = parseFloat(montoStr);
           const tipo = fila.Tipo ? String(fila.Tipo).toLowerCase().trim() : '';
           const categoria = fila.Categoria ? String(fila.Categoria) : 'Otros';
+          const detalleText = fila.Detalle ? String(fila.Detalle).trim() : 'Sin detalle';
 
           if (tipo === 'ingreso') {
             ingresos += monto;
           } else if (tipo === 'gasto' || tipo === 'gastos') {
             gastos += monto;
-
+            
+            // Sumar al total de la categoría
             if (categorias[categoria]) {
               categorias[categoria] += monto;
             } else {
               categorias[categoria] = monto;
             }
+
+            // Guardar el gasto individual en la lista de su categoría
+            if (!detallesCat[categoria]) {
+              detallesCat[categoria] = [];
+            }
+            detallesCat[categoria].push({
+              detalle: detalleText,
+              monto: monto
+            });
           }
         });
 
         const dataCategorias: DataCategoria[] = Object.keys(categorias).map(nombre => ({
           name: nombre,
           value: categorias[nombre]
-        })).sort((a, b) => b.value - a.value);
+        })).sort((a, b) => b.value - a.value); 
 
         setTotales({ ingresos, gastos });
         setGastosPorCategoria(dataCategorias);
+        setDetallesPorCategoria(detallesCat);
         setDatos(filas);
         setCargando(false);
       }
@@ -78,7 +98,7 @@ export default function App() {
     <div className="min-h-screen bg-gray-900 text-white p-6 font-sans">
       <div className="max-w-4xl mx-auto">
         <h1 className="text-3xl font-bold mb-8 text-center text-gray-100">Mi Panel Financiero</h1>
-
+        
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700 flex items-center gap-4">
             <ArrowUpCircle className="text-green-400" size={40} />
@@ -87,7 +107,7 @@ export default function App() {
               <p className="text-2xl font-bold text-green-400">${totales.ingresos.toLocaleString()}</p>
             </div>
           </div>
-
+          
           <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700 flex items-center gap-4">
             <ArrowDownCircle className="text-red-400" size={40} />
             <div>
@@ -106,7 +126,7 @@ export default function App() {
         </div>
 
         <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700 mb-8">
-          <h2 className="text-xl font-semibold mb-4 text-gray-200">Gastos por Categoría</h2>
+          <h2 className="text-xl font-semibold mb-4 text-gray-200">Resumen por Categoría</h2>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -124,8 +144,7 @@ export default function App() {
                     <Cell key={`cell-${index}`} fill={COLORES[index % COLORES.length]} />
                   ))}
                 </Pie>
-                {/* 4. Verificamos que el value no sea undefined para el Tooltip */}
-                <Tooltip
+                <Tooltip 
                   formatter={(value: any) => `$${Number(value || 0).toLocaleString()}`}
                   contentStyle={{ backgroundColor: '#1f2937', borderColor: '#374151', borderRadius: '8px' }}
                 />
@@ -134,7 +153,28 @@ export default function App() {
             </ResponsiveContainer>
           </div>
         </div>
+
+        {/* Nueva sección: Desglose de gastos */}
+        <h2 className="text-2xl font-bold mb-6 text-gray-100 mt-10">Detalle de Movimientos</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {Object.entries(detallesPorCategoria).map(([categoria, items]) => (
+            <div key={categoria} className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700">
+              <h3 className="text-lg font-bold text-blue-400 border-b border-gray-700 pb-3 mb-4">{categoria}</h3>
+              <ul className="space-y-3">
+                {items.map((item, i) => (
+                  <li key={i} className="flex justify-between items-center text-sm">
+                    <span className="text-gray-300 capitalize">{item.detalle}</span>
+                    <span className="font-mono text-gray-400">${item.monto.toLocaleString()}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
       </div>
     </div>
   );
 }
+
+
